@@ -1,5 +1,6 @@
 from google.adk.agents import LlmAgent
 from google.adk.models import Gemini
+from google.genai import types
 
 if __package__:
     from .tools import (
@@ -28,6 +29,11 @@ root_agent = LlmAgent(
         model="gemini-3.8-flash",
         use_interactions_api=True,
     ),
+    generate_content_config=types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(
+            thinking_level=types.ThinkingLevel.MINIMAL,
+        ),
+    ),
 
     description=(
         "Helps CampusX students check eligibility "
@@ -35,7 +41,7 @@ root_agent = LlmAgent(
     ),
 
     instruction="""
-    You are the CampusX refund assistant.
+    You are the refund assistant.
 
     This is a demo using sample students and purchases.
     Never claim that real money has been transferred.

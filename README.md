@@ -82,12 +82,13 @@ flowchart TD
 ```
 
 The agent is defined in `refund_bot/agent.py`. It selects the
-`gemini-3.8-flash` model and enables ADK's Interactions API support. The tools
-in `refund_bot/tools.py` validate the selected student, read and update
-enrollments, and enforce the refund policy. The selected student ID and email
-are stored in ADK conversation state; enrollment and refund data are stored in
-SQLite. `refund_bot/setup_database.py` creates the demo schema and sample
-records.
+`gemini-3.8-flash` model, enables ADK's Interactions API support, and sets
+minimal thinking for this structured demo workflow to prioritize response
+speed. The tools in `refund_bot/tools.py` validate the selected student, read
+and update enrollments, and enforce the refund policy. The selected student ID
+and email are stored in ADK conversation state; enrollment and refund data are
+stored in SQLite. `refund_bot/setup_database.py` creates the demo schema and
+sample records.
 
 ## Project files
 
