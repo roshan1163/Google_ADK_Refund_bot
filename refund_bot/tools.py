@@ -72,7 +72,7 @@ def email_required():
         "status": "email_required",
         "message": (
             "Please ask the user for the email address "
-            "used to purchase their CampusX course."
+            "used to purchase their SKR'S course."
         ),
     }
 
@@ -151,7 +151,7 @@ def evaluate_eligibility(enrollment):
 # ---------------------------------------
 
 def get_refund_policy() -> dict:
-    """Return CampusX's common refund policy."""
+    """Return SKR'S's common refund policy."""
 
     return {
         "refund_window_days": REFUND_WINDOW_DAYS,
