@@ -1,5 +1,10 @@
+import re
 from google.adk.agents import LlmAgent
 from google.adk.models import Gemini
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.tools.google_search_tool import GoogleSearchTool
 from google.genai import types
 
 if __package__:
@@ -10,6 +15,7 @@ if __package__:
         check_refund_eligibility,
         request_refund,
         get_refund_status,
+        generate_cds_view,
     )
 else:
     from tools import (
@@ -19,6 +25,61 @@ else:
         check_refund_eligibility,
         request_refund,
         get_refund_status,
+        generate_cds_view,
+    )
+
+
+_CDS_REQUEST_PATTERN = re.compile(
+    r"\b(?:create|generate|build|write|make)?\s*"
+    r"(?:a\s+)?(?:classic\s+)?(?:ABAP\s+)?CDS\s+view\b"
+    r".*?\b(?:for|of)\s+(?:SAP\s+)?(?:table\s+)?"
+    r"((?:/[A-Z0-9_]+/)?[A-Z][A-Z0-9_]{0,29})\b",
+    re.IGNORECASE,
+)
+
+
+def fast_cds_response(
+    callback_context: CallbackContext,
+    llm_request: LlmRequest,
+) -> LlmResponse | None:
+    """Answer explicit CDS-by-table requests without a Gemini round-trip."""
+
+    del callback_context
+
+    user_text = next(
+        (
+            "\n".join(
+                part.text
+                for part in content.parts or []
+                if part.text
+            )
+            for content in reversed(llm_request.contents)
+            if content.role == "user"
+        ),
+        "",
+    )
+    match = _CDS_REQUEST_PATTERN.search(user_text)
+    if match is None:
+        return None
+
+    result = generate_cds_view(match.group(1))
+    if result["status"] == "success":
+        answer = (
+            f"Source metadata: {result['source']}\n\n"
+            f"```abap\n{result['cds_view']}\n```\n\n"
+            f"{result['message']}"
+        )
+    elif result["status"] in {"not_covered", "invalid_metadata"}:
+        return None
+    else:
+        answer = result["message"]
+
+    return LlmResponse(
+        content=types.Content(
+            role="model",
+            parts=[types.Part(text=answer)],
+        ),
+        turn_complete=True,
     )
 
 
@@ -29,19 +90,34 @@ root_agent = LlmAgent(
         model="gemini-3.8-flash",
         use_interactions_api=True,
     ),
-    generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(
-            thinking_level=types.ThinkingLevel.MINIMAL,
-        ),
-    ),
+    before_model_callback=fast_cds_response,
 
     description=(
-        "Helps CampusX students check eligibility "
-        "and request course refunds."
+        "Generates metadata-grounded classic ABAP CDS projection views "
+        "and helps students with demo course refunds."
     ),
 
     instruction="""
-    You are the refund assistant.
+    You are an assistant for classic ABAP CDS view generation and demo
+    course refunds.
+
+    CDS VIEW GENERATION
+
+    For a table present in the local catalog, return the CDS source supplied
+    by the local fast path.
+
+    For an uncovered table, use Google Search to find the table's fields and
+    primary keys. Prefer official SAP documentation and information matching
+    the user's SAP release. Cite the sources used. Generate a classic ABAP
+    CDS view only from fields and keys supported by those sources. Never
+    invent missing fields or keys; if reliable sources do not establish them,
+    explain the limitation and ask for an authoritative metadata export.
+
+    The tool generates classic ABAP CDS projection views only. It does not
+    create or activate objects in an SAP system. Tell the user to verify the
+    generated source in the target ABAP system before activation. Web search
+    results may be incomplete or version-specific, so do not claim the result
+    is guaranteed correct.
 
     This is a demo using sample students and purchases.
     Never claim that real money has been transferred.
@@ -130,5 +206,6 @@ root_agent = LlmAgent(
         check_refund_eligibility,
         request_refund,
         get_refund_status,
+        GoogleSearchTool(bypass_multi_tools_limit=True),
     ],
-)
+) 

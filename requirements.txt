@@ -1,1 +1,2 @@
 google-adk
+litellm>=1.84,<1.106.3

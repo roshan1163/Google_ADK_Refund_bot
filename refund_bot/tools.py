@@ -1,3 +1,4 @@
+import json
 import re
 import sqlite3
 
@@ -10,9 +11,182 @@ from google.adk.tools import ToolContext
 
 # Uses the database you just created.
 DB_PATH = Path(__file__).resolve().parent / "campusx.db"
+CDS_CATALOG_PATH = (
+    Path(__file__).resolve().parent
+    / "cds_knowledge"
+    / "metadata_catalog.json"
+)
 
 REFUND_WINDOW_DAYS = 7
 MAX_COMPLETION_PERCENT = 20
+
+_CDS_TABLE_PATTERN = re.compile(
+    r"(?:/[A-Z0-9_]+/)?[A-Z][A-Z0-9_]{0,29}\Z"
+)
+_CDS_IDENTIFIER_PATTERN = re.compile(r"[A-Z][A-Z0-9_]*\Z")
+_CDS_FIELD_ALIAS_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_]*\Z")
+
+
+def generate_cds_view(table_name: str) -> dict:
+    """Generate a classic ABAP CDS projection from verified local metadata.
+
+    The catalog must contain the table's source, CDS names, and complete field
+    list. Unsupported or incomplete entries are rejected instead of guessed.
+    """
+
+    normalized_table = table_name.strip().upper()
+    if not _CDS_TABLE_PATTERN.fullmatch(normalized_table):
+        return {
+            "status": "invalid_table_name",
+            "message": "Provide a valid SAP table name, such as MARA.",
+        }
+
+    try:
+        catalog = json.loads(
+            CDS_CATALOG_PATH.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return {
+            "status": "catalog_error",
+            "message": f"Could not read CDS metadata catalog: {error}",
+        }
+
+    tables = catalog.get("tables") if isinstance(catalog, dict) else None
+    if not isinstance(tables, dict):
+        return {
+            "status": "catalog_error",
+            "message": "The CDS metadata catalog must contain a tables object.",
+        }
+
+    metadata = tables.get(normalized_table)
+    if not isinstance(metadata, dict):
+        return {
+            "status": "not_covered",
+            "table_name": normalized_table,
+            "message": (
+                f"No verified metadata is available for {normalized_table}. "
+                "The CDS view was not generated. Add authoritative table "
+                "metadata to the local CDS catalog."
+            ),
+        }
+
+    view_name = metadata.get("view_name")
+    sql_view_name = metadata.get("sql_view_name")
+    source = metadata.get("source")
+    fields = metadata.get("fields")
+
+    if (
+        not isinstance(view_name, str)
+        or len(view_name) > 30
+        or not _CDS_IDENTIFIER_PATTERN.fullmatch(view_name)
+        or not isinstance(sql_view_name, str)
+        or len(sql_view_name) > 16
+        or not _CDS_IDENTIFIER_PATTERN.fullmatch(sql_view_name)
+        or not isinstance(source, str)
+        or not source.strip()
+        or not isinstance(fields, list)
+        or not fields
+    ):
+        return {
+            "status": "invalid_metadata",
+            "table_name": normalized_table,
+            "message": (
+                "Metadata must include a source, a CDS view name of at most "
+                "30 characters, a SQL view name of at most 16 characters, "
+                "and a nonempty fields list."
+            ),
+        }
+
+    rendered_fields = []
+    seen_names = set()
+    seen_aliases = set()
+    has_key = False
+
+    for field in fields:
+        if not isinstance(field, dict):
+            return {
+                "status": "invalid_metadata",
+                "table_name": normalized_table,
+                "message": "Every field entry must be an object.",
+            }
+
+        name = field.get("name")
+        alias = field.get("alias", name)
+        is_key = field.get("key")
+
+        if (
+            not isinstance(name, str)
+            or len(name) > 30
+            or not _CDS_IDENTIFIER_PATTERN.fullmatch(name)
+            or not isinstance(alias, str)
+            or len(alias) > 30
+            or not _CDS_FIELD_ALIAS_PATTERN.fullmatch(alias)
+            or not isinstance(is_key, bool)
+            or name in seen_names
+            or alias.casefold() in seen_aliases
+        ):
+            return {
+                "status": "invalid_metadata",
+                "table_name": normalized_table,
+                "message": (
+                    "Each field must have a unique valid name and alias, "
+                    "and an explicit boolean key value."
+                ),
+            }
+
+        seen_names.add(name)
+        seen_aliases.add(alias.casefold())
+        has_key = has_key or is_key
+        key_prefix = "  key " if is_key else "      "
+        field_expression = f"{key_prefix}{name}"
+        if alias != name:
+            field_expression += f" as {alias}"
+        rendered_fields.append(field_expression)
+
+    if not has_key:
+        return {
+            "status": "invalid_metadata",
+            "table_name": normalized_table,
+            "message": "Metadata must mark at least one key field.",
+        }
+
+    label = metadata.get("label", f"{normalized_table} projection")
+    if (
+        not isinstance(label, str)
+        or not label.strip()
+        or len(label) > 60
+    ):
+        return {
+            "status": "invalid_metadata",
+            "table_name": normalized_table,
+            "message": "The optional label must be 1 to 60 characters.",
+        }
+    escaped_label = label.replace("'", "''")
+
+    cds_view = "\n".join(
+        [
+            f"@AbapCatalog.sqlViewName: '{sql_view_name}'",
+            "@AbapCatalog.compiler.compareFilter: true",
+            "@AccessControl.authorizationCheck: #CHECK",
+            f"@EndUserText.label: '{escaped_label}'",
+            f"define view {view_name}",
+            f"  as select from {normalized_table}",
+            "{",
+            ",\n".join(rendered_fields),
+            "}",
+        ]
+    )
+
+    return {
+        "status": "success",
+        "table_name": normalized_table,
+        "source": source,
+        "cds_view": cds_view,
+        "message": (
+            "Generated from the exact table entry in the local metadata "
+            "catalog. Verify it in the target ABAP system before activation."
+        ),
+    },
 
 
 # ---------------------------------------

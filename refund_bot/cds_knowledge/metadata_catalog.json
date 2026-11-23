@@ -1,0 +1,20 @@
+{
+  "tables": {
+    "EKPO": {
+      "label": "Purchasing document item selected fields",
+      "source": "SAPDatasheet EKPO components reference: https://www.sapdatasheet.org/abap/tabl/ekpo.html (verify fields and keys against the target SAP system and release)",
+      "view_name": "ZI_EKPO_ITEMS",
+      "sql_view_name": "ZIEKPOITEMS",
+      "fields": [
+        {"name": "EBELN", "key": true},
+        {"name": "EBELP", "key": true},
+        {"name": "LOEKZ", "key": false},
+        {"name": "STATU", "key": false},
+        {"name": "AEDAT", "key": false},
+        {"name": "TXZ01", "key": false},
+        {"name": "MATNR", "key": false},
+        {"name": "EMATN", "key": false}
+      ]
+    }
+  }
+}
